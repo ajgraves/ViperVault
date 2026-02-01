@@ -7,7 +7,6 @@ import time
 import secrets
 import http.cookies
 import html
-import secrets
 
 # ────────────────────────────────────────────────
 #          CONFIGURATION ── LOADED FROM FILE
@@ -62,6 +61,7 @@ for name, view_config in LOG_VIEWS.items():
             "bottom": view_config.get("bottom", False)   # ← new
         }
 
+# Sort views alphabetically for the dropdown
 SORTED_LOG_VIEWS = dict(sorted(NORMALIZED_VIEWS.items()))
 # ────────────────────────────────────────────────
 
@@ -106,6 +106,7 @@ def create_session():
     ensure_session_dir()
     cleanup_old_sessions()
     
+    # Generate a secure random token
     session_token = secrets.token_urlsafe(32)
     current_time = time.time()
     
@@ -117,6 +118,8 @@ def create_session():
     session_file = os.path.join(SESSION_DIR, f"{session_token}.json")
     with open(session_file, 'w') as f:
         json.dump(session_data, f)
+    
+    # Set restricted permissions on the session file
     os.chmod(session_file, 0o600)
     
     return session_token
@@ -212,17 +215,29 @@ def clear_session_cookie():
     return cookie.output()
 
 # ────────────────────────────────────────────────
+#          HELPER FUNCTIONS
+# ────────────────────────────────────────────────
 
 def get_log_output(command):
+    """Execute a command and return its output"""
     try:
+        # Run command using shell to support pipes and redirections
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, check=True
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=True
         )
         return result.stdout
     except subprocess.CalledProcessError as e:
         return f"Error running command: {e.stderr}\nReturn code: {e.returncode}"
     except Exception as e:
         return f"Unexpected error: {str(e)}"
+
+# ────────────────────────────────────────────────
+#          MAIN REQUEST HANDLER
+# ────────────────────────────────────────────────
 
 form = cgi.FieldStorage()
 action = form.getvalue('action')
@@ -295,16 +310,21 @@ elif action == 'get_log':
 
 # Default: Show the main page
 else:
-    # Generate nonce (22 characters is typical after stripping padding)
+    # Generate nonce for CSP
     nonce = secrets.token_urlsafe(16)
 
-    print(f"Content-Security-Policy: default-src 'self'; script-src 'self' https://code.jquery.com 'nonce-{nonce}'; style-src 'self' 'unsafe-inline';")  # ← ADDED CSP
+    # Added CSP header including nonce for scripts
+    print(f"Content-Security-Policy: default-src 'self'; script-src 'self' https://code.jquery.com 'nonce-{nonce}'; style-src 'self' 'unsafe-inline';")
     print("Content-Type: text/html; charset=utf-8")
     print("")
+    
+    # Prepare normalized config for JavaScript
     log_config_json = json.dumps({
         name: {
             "refresh": v["refresh"],
-            "bottom": v["bottom"]
+            "bottom": v["bottom"],
+            "cmd": v["cmd"],
+            "safe_output": v["safe_output"]
         }
         for name, v in SORTED_LOG_VIEWS.items()
     })
@@ -416,7 +436,7 @@ else:
                 position: static; margin-bottom: 12px; justify-content: flex-end;
             }}
         }}
-        #theme-toggle, #logout-btn {{
+        #theme-toggle, #logout-btn, #info-btn {{
             padding: 8px 12px; background: var(--log-bg);
             border: 1px solid var(--log-border); color: var(--text-color);
             cursor: pointer; border-radius: 4px; font-size: 1.2em;
@@ -424,6 +444,24 @@ else:
         h1 {{ color: var(--heading-color); margin: 0 0 8px 0; }}
         #log-output::-webkit-scrollbar {{ width: 8px; }}
         #log-output::-webkit-scrollbar-thumb {{ background: var(--log-border); border-radius: 4px; }}
+
+        /* Modal Styles */
+        #info-modal {{
+            display: none; position: fixed; z-index: 1000;
+            left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }}
+        .modal-content {{
+            background-color: var(--select-bg);
+            margin: 15% auto; padding: 20px;
+            border: 1px solid var(--log-border);
+            border-radius: 8px; width: 80%; max-width: 600px;
+            color: var(--text-color);
+        }}
+        .modal-header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--log-border); padding-bottom: 10px; }}
+        .modal-body {{ padding: 20px 0; font-family: monospace; line-height: 1.6; }}
+        .modal-body div {{ margin-bottom: 10px; word-break: break-all; }}
+        .close-modal {{ cursor: pointer; font-size: 1.5em; }}
     </style>
 </head>
 <body>
@@ -438,6 +476,7 @@ else:
 
     <div id="content">
         <div id="top-controls">
+            <button id="info-btn" title="View Info">ℹ️</button>
             <button id="theme-toggle">🌙</button>
             <button id="logout-btn" title="Logout">🚪</button>
         </div>
@@ -447,13 +486,14 @@ else:
                 <option value="" disabled selected>Select log source...</option>
 """)
 
+    # Populate dropdown with views
     for name in SORTED_LOG_VIEWS:
         print(f'                <option value="{name}">{name}</option>')
 
     print(f"""\
             </select>
             <div id="search-container">
-                <input type="text" id="log-search" placeholder="Filter (supports Regex) - Press '/' to search..." autocomplete="off">
+                <input type="text" id="log-search" placeholder="Press '/' to search..." autocomplete="off">
                 <div id="search-tools">
                     <span class="regex-badge">REGEX</span>
                     <span id="clear-search">X</span>
@@ -464,6 +504,16 @@ else:
         <div id="status-bar">
             <button id="pause-btn" class="btn-running">Pause</button>
             <span id="timer"></span>
+        </div>
+    </div>
+
+    <div id="info-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="margin:0;">View Configuration</h3>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div id="info-body" class="modal-body"></div>
         </div>
     </div>
 
@@ -479,6 +529,7 @@ else:
         let isPaused = false;
         let isAuthenticated = false;
 
+        // Cache DOM elements
         const loginScreen = document.getElementById('login-screen');
         const contentDiv = document.getElementById('content');
         const loginForm = document.getElementById('login-form');
@@ -489,6 +540,10 @@ else:
         const searchInput = document.getElementById('log-search');
         const clearSearchBtn = document.getElementById('clear-search');
         const logoutBtn = document.getElementById('logout-btn');
+        const infoBtn = document.getElementById('info-btn');
+        const infoModal = document.getElementById('info-modal');
+        const infoBody = document.getElementById('info-body');
+        const closeModal = document.querySelector('.close-modal');
 
         function getInterval() {{
             // Ensure we check if the value is strictly undefined/null 
@@ -499,6 +554,7 @@ else:
             return DEFAULT_INTERVAL;
         }}
 
+        // Filter log data based on search input
         function applyFilter() {{
             const term = searchInput.value;
             clearSearchBtn.style.display = term ? 'block' : 'none';
@@ -521,6 +577,7 @@ else:
             }}
         }}
 
+        // Update the countdown timer display
         function startCountdown() {{
             const interval = getInterval();
             if (isPaused || interval <= 0) return;
@@ -548,10 +605,14 @@ else:
             clearInterval(countdown);
         }}
 
+        // Main function to fetch logs from server
         function loadLogs() {{
             if (!currentView || !isAuthenticated) return;
+            
+            // Clear any existing timeouts to prevent multiple parallel refreshes
             clearTimeout(refreshTimeout);
 
+            // If paused, just check back in 1 second
             if (isPaused) {{
                 refreshTimeout = setTimeout(loadLogs, 1000);
                 return;
@@ -585,12 +646,34 @@ else:
                 }},
                 error: function(xhr, status, error) {{
                     console.error('AJAX error:', status, error);
-                    timerEl.textContent = "Error — retrying...";
+                    timerEl.textContent = "Error fetching logs — retrying...";
                     refreshTimeout = setTimeout(loadLogs, 5000);
                 }}
             }});
         }}
 
+        // Info button click handler
+        infoBtn.onclick = () => {{
+            if (!currentView) {{
+                infoBody.innerHTML = "No log source selected.";
+            }} else {{
+                const cfg = LOG_CONFIG[currentView];
+                // Using escaped dollar signs for JS template literals inside Python f-string
+                infoBody.innerHTML = 
+                    '<div><strong>Name:</strong> ' + currentView + '</div>' +
+                    '<div><strong>Command:</strong> <code style="background:var(--log-bg); padding:2px 4px; border:1px solid var(--log-border);">' + cfg.cmd + '</code></div>' +
+                    '<div><strong>Refresh Rate:</strong> ' + cfg.refresh + 's</div>' +
+                    '<div><strong>Scroll to Bottom:</strong> ' + (cfg.bottom ? "Enabled" : "Disabled") + '</div>' +
+                    '<div><strong>HTML Escaping (Safe):</strong> ' + (cfg.safe_output ? "Enabled" : "Disabled") + '</div>';
+            }}
+            infoModal.style.display = "block";
+        }};
+
+        // Modal close handlers
+        closeModal.onclick = () => infoModal.style.display = "none";
+        window.onclick = (e) => {{ if (e.target == infoModal) infoModal.style.display = "none"; }};
+
+        // Pause/Resume button handler
         pauseBtn.addEventListener('click', () => {{
             isPaused = !isPaused;
             pauseBtn.textContent = isPaused ? "Resume" : "Pause";
@@ -606,6 +689,7 @@ else:
             }}
         }});
 
+        // Handle view selection change
         function triggerSelection(viewName) {{
             currentView = viewName;
             if (currentView) {{
@@ -618,18 +702,22 @@ else:
                 pauseBtn.textContent = "Pause";
                 document.getElementById('log-title').textContent = currentView;
                 localStorage.setItem(STORAGE_KEY, currentView);
+                
                 $('#log-output').text('Loading...');
                 clearInterval(countdown);
                 clearTimeout(refreshTimeout);
+                
                 if (interval > 0) {{
                     timerEl.textContent = "Loading... (Refresh rate: " + interval + "s)";
                 }} else {{
                     timerEl.textContent = "Loading... (Auto-refresh disabled)";
                 }}
+                
                 loadLogs();
             }}
         }}
 
+        // Keyboard shortcuts
         searchInput.addEventListener('input', applyFilter);
         clearSearchBtn.addEventListener('click', () => {{
             searchInput.value = "";
@@ -638,21 +726,37 @@ else:
         }});
 
         document.addEventListener('keydown', (e) => {{
-            // Escape key logic: Clear and unfocus search if already in the field
-            if (e.key === "Escape" && document.activeElement === searchInput) {{
-                searchInput.value = "";
-                applyFilter();
-                searchInput.blur(); // Optional: removes focus from the box after clearing
+            // Check if the info modal is currently visible
+            const isModalVisible = infoModal.style.display === "block";
+
+            if (e.key === "Escape") {{
+                if (isModalVisible) {{
+                    // Priority 1: If modal is open, close it and don't touch the search bar
+                    infoModal.style.display = "none";
+                }} 
+                else if (document.activeElement === searchInput) {{
+                    // Priority 2: If modal is closed and search is focused, clear it
+                    searchInput.value = "";
+                    applyFilter();
+                    searchInput.blur();
+                }}
             }} 
             // Slash key logic: Focus search if not already typing elsewhere
-            else if (e.key === "/" && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {{
+            else if (e.key === "/" && 
+                     document.activeElement.tagName !== 'INPUT' && 
+                     document.activeElement.tagName !== 'TEXTAREA' && 
+                     !isModalVisible) {{
                 e.preventDefault(); 
                 searchInput.focus();
             }}
         }});
 
-        $('#log-selector').on('change', function() {{ triggerSelection(this.value); }});
+        // Event listener for log source dropdown
+        $('#log-selector').on('change', function() {{
+            triggerSelection(this.value);
+        }});
 
+        // Handle login form submission
         loginForm.addEventListener('submit', (e) => {{
             e.preventDefault();
             const password = passwordInput.value;
@@ -671,6 +775,7 @@ else:
                         passwordInput.value = '';
                         initTheme();
                         
+                        // Load last view if exists
                         const saved = localStorage.getItem(STORAGE_KEY);
                         const selector = document.getElementById('log-selector');
                         if (saved && [...selector.options].some(o => o.value === saved)) {{
@@ -694,6 +799,7 @@ else:
             }});
         }});
 
+        // Logout handler
         logoutBtn.addEventListener('click', () => {{
             $.ajax({{
                 url: '?action=logout',
@@ -711,16 +817,35 @@ else:
             }});
         }});
 
+        // Theme management
         function setTheme(t) {{
-            t === 'dark' ? document.body.classList.add('dark') : document.body.classList.remove('dark');
-            document.getElementById('theme-toggle').textContent = t === 'dark' ? '☀️' : '🌙';
+            if (t === 'dark') {{
+                document.body.classList.add('dark');
+                document.getElementById('theme-toggle').textContent = '☀️';
+            }} else {{
+                document.body.classList.remove('dark');
+                document.getElementById('theme-toggle').textContent = '🌙';
+            }}
             localStorage.setItem('theme', t);
         }}
-        function initTheme() {{
-            setTheme(localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-        }}
-        document.getElementById('theme-toggle').addEventListener('click', () => setTheme(document.body.classList.contains('dark') ? 'light' : 'dark'));
 
+        function initTheme() {{
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) {{
+                setTheme(savedTheme);
+            }} else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {{
+                setTheme('dark');
+            }} else {{
+                setTheme('light');
+            }}
+        }}
+
+        document.getElementById('theme-toggle').addEventListener('click', () => {{
+            const newTheme = document.body.classList.contains('dark') ? 'light' : 'dark';
+            setTheme(newTheme);
+        }});
+
+        // Check for existing session on load
         function checkExistingSession() {{
             $.ajax({{
                 url: '?action=check_session',
@@ -733,6 +858,7 @@ else:
                         contentDiv.style.display = 'flex';
                         initTheme();
                         
+                        // Restore previous view if available
                         const saved = localStorage.getItem(STORAGE_KEY);
                         const selector = document.getElementById('log-selector');
                         if (saved && [...selector.options].some(o => o.value === saved)) {{
@@ -755,6 +881,7 @@ else:
             }});
         }}
 
+        // Initialization on window load
         window.onload = () => {{
             initTheme();
             checkExistingSession();
