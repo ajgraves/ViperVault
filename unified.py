@@ -561,6 +561,11 @@ else:
 
             if (!term) {{
                 $('#log-output').text(rawLogData);
+                // Scroll to bottom if this view is configured for bottom scrolling
+                if (LOG_CONFIG[currentView]?.bottom === true) {{
+                    const logOutput = document.getElementById('log-output');
+                    logOutput.scrollTop = logOutput.scrollHeight;
+                }}
                 return;
             }}
 
