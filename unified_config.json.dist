@@ -1,0 +1,13 @@
+{
+  "password": "YOUR SECRET PASSWORD HERE",
+  "refresh_interval": 30,
+  "session_duration": 86400,
+  "inactivity_timeout": 3600,
+  "log_views": {
+    "Test 1": "echo test 1",
+    "Test 2": {
+      "cmd": "tech test 2",
+      "refresh": 15
+    }
+  }
+}
