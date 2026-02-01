@@ -62,7 +62,7 @@ for name, view_config in LOG_VIEWS.items():
         }
 
 # Sort views alphabetically for the dropdown
-SORTED_LOG_VIEWS = dict(sorted(NORMALIZED_VIEWS.items()))
+SORTED_LOG_VIEWS = dict(sorted(NORMALIZED_VIEWS.items(), key=lambda item: item[0].lower()))
 # ────────────────────────────────────────────────
 
 # ────────────────────────────────────────────────
