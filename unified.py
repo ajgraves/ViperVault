@@ -662,7 +662,7 @@ else:
                 infoBody.innerHTML = 
                     '<div><strong>Name:</strong> ' + currentView + '</div>' +
                     '<div><strong>Command:</strong> <code style="background:var(--log-bg); padding:2px 4px; border:1px solid var(--log-border);">' + cfg.cmd + '</code></div>' +
-                    '<div><strong>Refresh Rate:</strong> ' + cfg.refresh + 's</div>' +
+                    '<div><strong>Refresh Rate:</strong> ' + (cfg.refresh <= 0 ? "Disabled" : cfg.refresh + "s") + '</div>' +
                     '<div><strong>Scroll to Bottom:</strong> ' + (cfg.bottom ? "Enabled" : "Disabled") + '</div>' +
                     '<div><strong>HTML Escaping (Safe):</strong> ' + (cfg.safe_output ? "Enabled" : "Disabled") + '</div>';
             }}
