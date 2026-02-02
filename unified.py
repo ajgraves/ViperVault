@@ -51,14 +51,14 @@ for name, view_config in LOG_VIEWS.items():
             "cmd": view_config,
             "refresh": REFRESH_INTERVAL,
             "safe_output": True,
-            "bottom": False                     # ← new, default false
+            "bottom": True
         }
     else:
         NORMALIZED_VIEWS[name] = {
             "cmd": view_config.get("cmd", ""),
             "refresh": view_config["refresh"] if "refresh" in view_config else REFRESH_INTERVAL,
             "safe_output": view_config.get("safe_output", True),
-            "bottom": view_config.get("bottom", False)   # ← new
+            "bottom": view_config.get("bottom", True)
         }
 
 # Sort views alphabetically for the dropdown
