@@ -707,6 +707,10 @@ else:
                 pauseBtn.textContent = "Pause";
                 document.getElementById('log-title').textContent = currentView;
                 localStorage.setItem(STORAGE_KEY, currentView);
+
+                // Clear search input when changing log view
+                searchInput.value = '';
+                clearSearchBtn.style.display = 'none';
                 
                 $('#log-output').text('Loading...');
                 clearInterval(countdown);
