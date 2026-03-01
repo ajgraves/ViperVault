@@ -428,6 +428,25 @@ else:
         }}
         .btn-running {{ background-color: #d73a49 !important; }}
         .btn-paused {{ background-color: #28a745 !important; }}
+        #copy-btn {{
+            padding: 4px 10px;
+            cursor: pointer;
+            border: 1px solid var(--log-border);
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 1.1em;
+            background: var(--btn-bg);
+            color: var(--text-color);
+            transition: background-color 0.2s;
+        }}
+        #copy-btn:hover {{
+            background: var(--heading-color);
+            color: white;
+        }}
+        #copy-btn.copied {{
+            background: #28a745 !important;  /* green like success/paused state */
+            color: white !important;
+        }}
         #top-controls {{
             position: fixed; top: 15px; right: 20px; display: flex; gap: 8px; z-index: 100;
         }}
@@ -502,6 +521,7 @@ else:
         </div>
         <div id="log-output">Select a log source to begin...</div>
         <div id="status-bar">
+            <button id="copy-btn" title="Copy to clipboard">📋</button>
             <button id="pause-btn" class="btn-running">Pause</button>
             <span id="timer"></span>
         </div>
@@ -544,6 +564,7 @@ else:
         const infoModal = document.getElementById('info-modal');
         const infoBody = document.getElementById('info-body');
         const closeModal = document.querySelector('.close-modal');
+        const copyBtn = document.getElementById('copy-btn');
 
         function getInterval() {{
             // Ensure we check if the value is strictly undefined/null 
@@ -692,6 +713,36 @@ else:
                 // Immediately refresh the logs when resuming
                 loadLogs();
             }}
+        }});
+
+        // Copy button handler
+        copyBtn.addEventListener('click', () => {{
+            const textToCopy = document.getElementById('log-output').textContent;
+            
+            if (!textToCopy || textToCopy.trim() === '') {{
+                return; // nothing to copy
+            }}
+            
+            navigator.clipboard.writeText(textToCopy)
+                .then(() => {{
+                    // Success feedback
+                    const originalText = copyBtn.textContent;
+                    copyBtn.textContent = 'Copied!';
+                    copyBtn.classList.add('copied');
+                    
+                    setTimeout(() => {{
+                        copyBtn.textContent = originalText;
+                        copyBtn.classList.remove('copied');
+                    }}, 1800); // revert after ~1.8 seconds
+                }})
+                .catch(err => {{
+                    console.error('Clipboard copy failed:', err);
+                    // Optional: show fallback message
+                    copyBtn.textContent = 'Copy failed';
+                    setTimeout(() => {{
+                        copyBtn.textContent = originalText;
+                    }}, 2000);
+                }});
         }});
 
         // Handle view selection change
