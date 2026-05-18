@@ -98,7 +98,7 @@ def cleanup_old_sessions():
                 # Remove corrupted session files
                 try:
                     os.remove(filepath)
-                except:
+                except Exception:
                     pass
 
 def create_session():
@@ -166,7 +166,7 @@ def destroy_session(session_token):
     try:
         if os.path.exists(session_file):
             os.remove(session_file)
-    except:
+    except Exception:
         pass
 
 def get_session_cookie():
@@ -180,7 +180,7 @@ def get_session_cookie():
         cookie.load(cookie_header)
         if 'session_token' in cookie:
             return cookie['session_token'].value
-    except:
+    except Exception:
         pass
     
     return None
@@ -221,19 +221,47 @@ def clear_session_cookie():
 def get_log_output(command):
     """Execute a command and return its output"""
     try:
-        # Run command using shell to support pipes and redirections
+        # Intentionally using shell=True so admin-controlled config commands can use
+        # pipes, redirects, and other shell features. Do not pass user-supplied input here.
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            timeout=10
         )
         return result.stdout
+    except subprocess.TimeoutExpired:
+        return "Error running command: command timed out after 10 seconds"
     except subprocess.CalledProcessError as e:
         return f"Error running command: {e.stderr}\nReturn code: {e.returncode}"
     except Exception as e:
         return f"Unexpected error: {str(e)}"
+
+def print_header(name, value):
+    print(f"{name}: {value}")
+
+def end_headers():
+    print("")
+
+def send_json(data, headers=None):
+    if headers:
+        for header in headers:
+            print(header)
+    print_header("Content-Type", "application/json")
+    end_headers()
+    print(json.dumps(data))
+
+def send_text(text, status=None, content_type="text/plain; charset=utf-8", headers=None):
+    if status:
+        print_header("Status", status)
+    if headers:
+        for header in headers:
+            print(header)
+    print_header("Content-Type", content_type)
+    end_headers()
+    print(text)
 
 # ────────────────────────────────────────────────
 #          MAIN REQUEST HANDLER
@@ -249,45 +277,32 @@ if action == 'login':
     
     if password_attempt == PASSWORD:
         session_token = create_session()
-        print(set_session_cookie(session_token))
-        print("Content-Type: application/json")
-        print("")
-        print(json.dumps({"success": True}))
+        send_json({"success": True}, headers=[set_session_cookie(session_token)])
     else:
-        print("Content-Type: application/json")
-        print("")
-        print(json.dumps({"success": False}))
+        send_json({"success": False})
 
 # Handle logout action
 elif action == 'logout':
     session_token = get_session_cookie()
     if session_token:
         destroy_session(session_token)
-    print(clear_session_cookie())
-    print("Content-Type: application/json")
-    print("")
-    print(json.dumps({"success": True}))
+
+    send_json({"success": True}, headers=[clear_session_cookie()])
 
 # Handle session check action
 elif action == 'check_session':
     session_token = get_session_cookie()
     is_valid = validate_session(session_token)
-    print("Content-Type: application/json")
-    print("")
-    print(json.dumps({"authenticated": is_valid}))
+    send_json({"authenticated": is_valid})
 
 # Handle get_log action - requires authentication
 elif action == 'get_log':
     session_token = get_session_cookie()
        
     if not validate_session(session_token):
-        print("Content-Type: text/plain")
-        print("")
-        print("Unauthorized: Invalid or expired session.")
+        send_text("Unauthorized: Invalid or expired session.")
     elif not selected_view or selected_view not in SORTED_LOG_VIEWS:
-        print("Content-Type: text/plain")
-        print("")
-        print("Invalid or missing log view selection.")
+        send_text("Invalid or missing log view selection.")
     else:
         try:
             view_config = SORTED_LOG_VIEWS[selected_view]
@@ -300,13 +315,9 @@ elif action == 'get_log':
             else:
                 output = raw_output
 
-            print("Content-Type: text/plain; charset=utf-8")
-            print("")
-            print(output)
+            send_text(output)
         except Exception as e:
-            print("Content-Type: text/plain")
-            print("")
-            print(f"Error executing command: {str(e)}")
+            send_text(f"Error executing command: {str(e)}")
 
 # Default: Show the main page
 else:
@@ -507,7 +518,8 @@ else:
 
     # Populate dropdown with views
     for name in SORTED_LOG_VIEWS:
-        print(f'                <option value="{name}">{name}</option>')
+        safe_name = html.escape(name, quote=True)
+        print(f'                <option value="{safe_name}">{safe_name}</option>')
 
     print(f"""\
             </select>
@@ -680,18 +692,45 @@ else:
 
         // Info button click handler
         infoBtn.onclick = () => {{
+            infoBody.textContent = "";
+
             if (!currentView) {{
-                infoBody.innerHTML = "No log source selected.";
+                infoBody.textContent = "No log source selected.";
             }} else {{
                 const cfg = LOG_CONFIG[currentView];
-                // Using escaped dollar signs for JS template literals inside Python f-string
-                infoBody.innerHTML = 
-                    '<div><strong>Name:</strong> ' + currentView + '</div>' +
-                    '<div><strong>Command:</strong> <code style="background:var(--log-bg); padding:2px 4px; border:1px solid var(--log-border);">' + cfg.cmd + '</code></div>' +
-                    '<div><strong>Refresh Rate:</strong> ' + (cfg.refresh <= 0 ? "Disabled" : cfg.refresh + "s") + '</div>' +
-                    '<div><strong>Scroll to Bottom:</strong> ' + (cfg.bottom ? "Enabled" : "Disabled") + '</div>' +
-                    '<div><strong>HTML Escaping (Safe):</strong> ' + (cfg.safe_output ? "Enabled" : "Disabled") + '</div>';
+
+                const rows = [
+                    ["Name:", currentView],
+                    ["Command:", cfg.cmd],
+                    ["Refresh Rate:", cfg.refresh <= 0 ? "Disabled" : cfg.refresh + "s"],
+                    ["Scroll to Bottom:", cfg.bottom ? "Enabled" : "Disabled"],
+                    ["HTML Escaping (Safe):", cfg.safe_output ? "Enabled" : "Disabled"]
+                ];
+
+                rows.forEach(([label, value]) => {{
+                    const row = document.createElement("div");
+
+                    const strong = document.createElement("strong");
+                    strong.textContent = label + " ";
+
+                    if (label === "Command:") {{
+                        const code = document.createElement("code");
+                        code.style.background = "var(--log-bg)";
+                        code.style.padding = "2px 4px";
+                        code.style.border = "1px solid var(--log-border)";
+                        code.textContent = value;
+
+                        row.appendChild(strong);
+                        row.appendChild(code);
+                    }} else {{
+                        row.appendChild(strong);
+                        row.appendChild(document.createTextNode(value));
+                    }}
+
+                    infoBody.appendChild(row);
+                }});
             }}
+
             infoModal.style.display = "block";
         }};
 
@@ -718,6 +757,7 @@ else:
         // Copy button handler
         copyBtn.addEventListener('click', () => {{
             const textToCopy = document.getElementById('log-output').textContent;
+            const originalText = copyBtn.textContent;
             
             if (!textToCopy || textToCopy.trim() === '') {{
                 return; // nothing to copy
@@ -726,7 +766,6 @@ else:
             navigator.clipboard.writeText(textToCopy)
                 .then(() => {{
                     // Success feedback
-                    const originalText = copyBtn.textContent;
                     copyBtn.textContent = 'Copied!';
                     copyBtn.classList.add('copied');
                     
